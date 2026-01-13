@@ -41,7 +41,7 @@ RUN mkdir -p /app/output && chmod 777 /app/output
 VOLUME ["/app/output"]
 
 # Standard node running (optional: create a user if strict security needed, but removing pptruser specific for chrome)
-USER hamza-node
+# USER hamza-node
 
 # REQUIREMENT: Une fois l'image construite et le conteneur lancé, l'exécution doit automatiquement
 # Utiliser le proxy spécifié ; Crawler les 200 pages ; Stocker les fichiers HTML
