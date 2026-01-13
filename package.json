@@ -1,14 +1,20 @@
 {
   "name": "carzone-crawler-node",
   "version": "1.0.0",
-  "description": "CarZone.ie web crawler built with Node.js, Express, and TypeScript",
+  "description": "CarZone.ie web crawler built with Node.js, TypeScript, Axios, and Cheerio",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "crawl": "ts-node src/crawler.ts",
-    "test": "ts-node src/testConnection.ts"
+    "test": "ts-node src/tests/run-all.test.ts",
+    "test:connection": "ts-node src/debug_check.ts",
+    "test:crawler": "ts-node src/tests/crawler.test.ts",
+    "test:utils": "ts-node src/tests/utils.test.ts",
+    "clean": "rm -rf dist test-output",
+    "docker:build": "docker build -t carzone-crawler .",
+    "docker:run": "docker run --rm -v \"${PWD}/output:/app/output\" carzone-crawler",
+    "docker:proxy": "docker run --rm -v \"${PWD}/output:/app/output\" -e PROXY_URL=\"$PROXY_URL\" carzone-crawler"
   },
   "keywords": [
     "crawler",

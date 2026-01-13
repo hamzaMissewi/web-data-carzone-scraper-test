@@ -13,6 +13,9 @@ ENV/
 build/
 dist
 
+package-lock.json
+website.png
+
 python
 
 # Docker

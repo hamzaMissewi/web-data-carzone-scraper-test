@@ -1,14 +1,15 @@
 # CarZone.ie Crawler
 
-A Dockerized Python crawler designed to scrape car listing pages from `carzone.ie`. It utilizes `curl_cffi` to mimic real browser TLS fingerprints (Chrome), effectively bypassing anti-bot protections (like Cloudflare or 403 blocks) while extracting HTML content.
+A Dockerized Node.js crawler designed to scrape car listing pages from `carzone.ie`. It utilizes `Axios` with `Cheerio` for HTML parsing and includes proxy support with smart rate limiting to effectively bypass anti-bot protections while extracting HTML content.
 
 ## ✨ Features
 
-- **🛡️ Anti-Bot Bypass**: Uses `curl_cffi` to impersonate a Chrome browser (TLS Fingerprinting).
-- **🐳 Dockerized**: Zero-setup deployment.
-- **🔄 Proxy Support**: Fully configurable via environment variables.
-- **⏱️ Smart Rate Limiting**: Random delays (1.5s - 2s) to behave like a human user.
-- **💾 Local Storage**: Saves raw HTML files and source URLs locally.
+- **🛡️ Anti-Bot Bypass**: Uses random User-Agent rotation and proxy support to mimic real browser behavior.
+- **🐳 Dockerized**: Zero-setup deployment with optimized multi-stage build.
+- **🔄 Proxy Support**: Fully configurable HTTP/HTTPS and SOCKS proxy support via environment variables.
+- **⏱️ Smart Rate Limiting**: Random delays (0.5s - 2s) to behave like a human user.
+- **💾 Local Storage**: Saves raw HTML files with numbered filenames to local volume.
+- **🔍 TypeScript**: Written in TypeScript for better type safety and maintainability.
 
 ## 🛠️ Prerequisites
 
@@ -73,23 +74,39 @@ You can configure the crawler behavior using Environment Variables:
 ## 📂 Project Structure
 
 ```text
-├── crawler.py           # Main logic (curl_cffi, bs4, logging)
-├── Dockerfile           # Optimized setup (non-root user, multi-stage)
-├── requirements.txt     # Dependencies (curl_cffi, lxml, bs4)
-├── README.md            # Documentation
-└── output/              # (Generated) Stores .html pages and .txt metadata
+├── src/
+│   ├── index.ts           # Main entry point and configuration
+│   ├── crawler.ts         # Core crawler logic (Axios, Cheerio, proxy)
+│   ├── logger.ts          # Logging utility
+│   └── utils.ts           # Helper functions (URL normalization, etc.)
+├── dist/                  # Compiled JavaScript (generated)
+├── Dockerfile             # Optimized setup (non-root user, security)
+├── package.json           # Node.js dependencies and scripts
+├── tsconfig.json          # TypeScript configuration
+├── README.md              # Documentation
+└── output/                # (Generated) Stores .html pages with numbered filenames
 ```
 
 ## 🧠 Technical Details
 
-1.  **Impersonation**: The crawler replaces standard `requests` with `curl_cffi` to send a TLS Client Hello that matches Google Chrome. This prevents the server from identifying the client as a Python script.
-2.  **Discovery Loop**: It iterates through search pagination (`/used-cars?page=X`) to find unique car listing URLs.
-3.  **Extraction**: Once a unique car URL is found, it downloads the HTML content using the `lxml` parser for speed.
-4.  **Resilience**: Robust error handling captures HTTP errors (like 403s or 500s) without crashing the entire process.
+1.  **User-Agent Rotation**: The crawler randomly selects from a pool of realistic browser User-Agents to mimic different Chrome/Firefox browsers and avoid detection.
+2.  **Proxy Integration**: Supports both HTTP/HTTPS and SOCKS proxies with proper agent configuration for request routing.
+3.  **Discovery Loop**: Iterates through search pagination (`/cars`, `/used-cars`, etc.) to find unique car listing URLs using Cheerio for link extraction.
+4.  **Extraction**: Once a unique car URL is found, it downloads the HTML content using Axios with proper timeout and retry handling.
+5.  **Resilience**: Robust error handling captures HTTP errors (like 403s or 500s) without crashing the entire process.
+6.  **TypeScript**: Full type safety with compiled JavaScript output for production deployment.
 
 ## ⚠️ Troubleshooting
 
 **Getting `403 Forbidden` errors?**
 
-- Ensure you are using the latest version of the code (check `requirements.txt` includes `curl_cffi`).
+- Ensure you are using the latest version of the code (check `package.json` includes `axios`, `cheerio`, and proxy agents).
+- Try using a proxy server with the `PROXY_URL` environment variable.
 - Rebuild your Docker image to ensure no old cache is used: `docker build --no-cache -t carzone-crawler .`
+- Check that the User-Agent rotation is working by examining the debug logs.
+
+**Build issues?**
+
+- Make sure you have Node.js 20+ and TypeScript installed for local development.
+- Run `npm ci` to install dependencies and `npm run build` to compile TypeScript.
+- All dependencies are production-ready and optimized for Docker deployment.
