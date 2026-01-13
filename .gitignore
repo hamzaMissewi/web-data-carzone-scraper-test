@@ -4,7 +4,6 @@ node_modules/
 # Output files
 # output/
 *.html
-*.txt
 
 .Python
 env/
@@ -35,9 +34,9 @@ Thumbs.db
 # Logs
 *.log
 
-# **/*.txt
-**/*copy*
 **/*ignore*
-# !TODO.txt
 !.gitignore
 !requirements.txt
+
+# **/*.md
+!README.md

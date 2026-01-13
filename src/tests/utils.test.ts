@@ -1,4 +1,8 @@
-import { normalizeUrl, slugifyForFilename, isListingCandidate } from "../utils";
+import {
+  normalizeUrl,
+  slugifyForFilename,
+  isListingCandidate,
+} from "../utils/utils";
 
 function testUtils() {
   console.log("🧪 Testing utility functions...\n");

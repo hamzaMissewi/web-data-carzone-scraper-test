@@ -1,4 +1,4 @@
-import { testConnection } from "../debug_check";
+import { testConnection } from "./debug_check";
 import { testCrawler } from "./crawler.test";
 import { testUtils } from "./utils.test";
 

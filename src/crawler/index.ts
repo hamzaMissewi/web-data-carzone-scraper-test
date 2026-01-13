@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { AxiosRequestConfig } from "axios";
 import * as cheerio from "cheerio";
 import * as fs from "fs";
 import * as path from "path";
@@ -6,13 +6,13 @@ import { URL } from "url";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
 
-import { Logger } from "./logger";
+import { Logger } from "../utils/logger";
 import {
   slugifyForFilename,
   normalizeUrl,
   isListingCandidate,
   politeSleep,
-} from "./utils";
+} from "../utils/utils";
 
 interface CrawlerConfig {
   outputDir: string;
@@ -42,8 +42,8 @@ export class Crawler {
     this.logger = logger;
   }
 
-  private getAxiosConfig(url: string) {
-    const config: any = {
+  private getAxiosConfig() {
+    const config: AxiosRequestConfig<{}> = {
       headers: {
         "User-Agent":
           this.config.userAgents[
@@ -89,7 +89,7 @@ export class Crawler {
   ): Promise<{ content: string; status: number } | null> {
     try {
       this.logger.debug(`Fetching ${url}...`);
-      const config = this.getAxiosConfig(url);
+      const config = this.getAxiosConfig();
       const response = await axios.get(url, config);
 
       return {

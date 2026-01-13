@@ -1,5 +1,5 @@
 import { Crawler } from "../crawler";
-import { setupLogger } from "../logger";
+import { setupLogger } from "../utils/logger";
 
 // Mock configuration for testing
 const testConfig = {

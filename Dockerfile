@@ -28,7 +28,7 @@ ARG PROXY_URL=""
 ENV PROXY_URL=${PROXY_URL}
 
 # REQUIREMENT: Stocker les fichiers HTML dans un dossier local monté depuis l'hôte
-ENV OUTPUT_DIR="/app/html"
+ENV OUTPUT_DIR="/app/output"
 
 # REQUIREMENT: Crawler 200 pages
 ENV MAX_PAGES=200
@@ -37,22 +37,31 @@ ENV MAX_PAGES=200
 ENV BASE_URL="https://www.carzone.ie"
 
 # Default runtime configuration (can be overridden at runtime)
-ENV START_URLS=https://www.carzone.ie/cars \
+# ENV START_URLS=https://www.carzone.ie/cars \
+ENV START_URLS=https://www.carzone.ie \
     CRAWL_DELAY_MIN=0.5 \
     CRAWL_DELAY_MAX=2.0 \
     REQUEST_TIMEOUT=20 \
     LOG_LEVEL=INFO
 
 # REQUIREMENT: Stocker les fichiers HTML dans un dossier local monté depuis l'hôte
-RUN mkdir -p /app/html && chmod 777 /app/html
+# RUN mkdir -p /app/html && chmod 777 /app/html
 
-# The volume where HTML files will be stored (html directory)
-VOLUME ["/app/html"]
+# # The volume where HTML files will be stored (html directory)
+# VOLUME ["/app/html"]
+
+
+# Create and set permissions for output directory
+RUN mkdir -p ${OUTPUT_DIR} && chmod 777 ${OUTPUT_DIR}
+
+# The volume where crawl results will be stored
+VOLUME ["${OUTPUT_DIR}"]
+
 
 # Create non-root user for security
-RUN useradd -m -u 1000 crawler && chown -R crawler:crawler /app
-USER crawler
+# RUN useradd -m -u 1000 crawler && chown -R crawler:crawler /app
+# USER crawler
 
-# REQUIREMENT: Une fois l'image construite et le conteneur lancé, l'exécution doit automatiquement
-# Utiliser le proxy spécifié ; Crawler les 200 pages ; Stocker les fichiers HTML
-CMD ["node", "dist/index.js"]
+
+CMD ["node", "dist/index2.js"]
+# CMD ["node", "dist/index.js"]
