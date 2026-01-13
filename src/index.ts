@@ -4,7 +4,7 @@ import { Crawler } from "./crawler";
 const LOGGER = setupLogger(process.env.LOG_LEVEL || "INFO");
 
 // Config via env vars
-const OUTPUT_DIR = process.env.OUTPUT_DIR || "/app/output";
+const OUTPUT_DIR = process.env.OUTPUT_DIR || "./html";
 // const OUTPUT_DIR = process.env.OUTPUT_DIR || "/data";
 // const PROXY_URL = process.env.PROXY_URL?.trim() || undefined;
 const PROXY_URL =
@@ -21,7 +21,6 @@ const CRAWL_DELAY_MIN = parseFloat(process.env.CRAWL_DELAY_MIN || "0.5");
 const CRAWL_DELAY_MAX = parseFloat(process.env.CRAWL_DELAY_MAX || "2.0");
 const REQUEST_TIMEOUT = parseFloat(process.env.REQUEST_TIMEOUT || "20");
 
-// Domain rules
 const ALLOWED_DOMAIN = "carzone.ie";
 const ALLOWED_PATH_PREFIXES = [
   "/cars",

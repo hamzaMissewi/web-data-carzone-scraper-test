@@ -13,8 +13,8 @@
     "test:utils": "ts-node src/tests/utils.test.ts",
     "clean": "rm -rf dist test-output",
     "docker:build": "docker build -t carzone-crawler .",
-    "docker:run": "docker run --rm -v \"${PWD}/output:/app/output\" carzone-crawler",
-    "docker:proxy": "docker run --rm -v \"${PWD}/output:/app/output\" -e PROXY_URL=\"$PROXY_URL\" carzone-crawler"
+    "docker:run": "docker run --rm -v \"${PWD}/html:/app/html\" carzone-crawler",
+    "docker:proxy": "docker run --rm -v \"${PWD}/html:/app/html\" -e PROXY_URL=\"$PROXY_URL\" carzone-crawler"
   },
   "keywords": [
     "crawler",

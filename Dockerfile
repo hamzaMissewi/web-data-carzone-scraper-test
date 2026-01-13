@@ -28,7 +28,7 @@ ARG PROXY_URL=""
 ENV PROXY_URL=${PROXY_URL}
 
 # REQUIREMENT: Stocker les fichiers HTML dans un dossier local monté depuis l'hôte
-ENV OUTPUT_DIR="/app/output"
+ENV OUTPUT_DIR="/app/html"
 
 # REQUIREMENT: Crawler 200 pages
 ENV MAX_PAGES=200
@@ -44,10 +44,10 @@ ENV START_URLS=https://www.carzone.ie/cars \
     LOG_LEVEL=INFO
 
 # REQUIREMENT: Stocker les fichiers HTML dans un dossier local monté depuis l'hôte
-RUN mkdir -p /app/output && chmod 777 /app/output
+RUN mkdir -p /app/html && chmod 777 /app/html
 
-# The volume where HTML files will be stored
-VOLUME ["/app/output"]
+# The volume where HTML files will be stored (html directory)
+VOLUME ["/app/html"]
 
 # Create non-root user for security
 RUN useradd -m -u 1000 crawler && chown -R crawler:crawler /app
