@@ -4,11 +4,15 @@ import { Crawler } from "./crawler";
 const LOGGER = setupLogger(process.env.LOG_LEVEL || "INFO");
 
 // Config via env vars
-const OUTPUT_DIR = process.env.OUTPUT_DIR || "/data";
+const OUTPUT_DIR = process.env.OUTPUT_DIR || "/app/output";
+// const OUTPUT_DIR = process.env.OUTPUT_DIR || "/data";
 // const PROXY_URL = process.env.PROXY_URL?.trim() || undefined;
 const PROXY_URL =
   process.env.PROXY_URL?.trim() || "http://user:pass@proxy-host:port";
-const START_URLS = (process.env.START_URLS || "https://www.carzone.ie/cars")
+// const START_URLS = process.env.START_URLS || "https://www.carzone.ie/cars";
+// const PROXY_URL = process.env.PROXY_URL?.trim() || "";
+const BASE_URL = process.env.BASE_URL || "https://www.carzone.ie";
+const START_URLS = (process.env.START_URLS || BASE_URL + "/cars")
   .split(",")
   .map((u) => u.trim())
   .filter((u) => u.length > 0);

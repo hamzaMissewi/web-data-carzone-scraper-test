@@ -46,7 +46,9 @@ export class Crawler {
     const config: any = {
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          this.config.userAgents[
+            Math.floor(Math.random() * this.config.userAgents.length)
+          ],
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
@@ -57,19 +59,26 @@ export class Crawler {
       },
       validateStatus: () => true,
       timeout: this.config.requestTimeout * 1000,
-      responseType: "text", // Force text to avoid issues with axios trying to parse JSON
+      responseType: "text",
     };
 
-    if (this.config.proxyUrl) {
-      if (this.config.proxyUrl.startsWith("socks")) {
-        const agent = new SocksProxyAgent(this.config.proxyUrl);
-        config.httpsAgent = agent;
-        config.httpAgent = agent;
-      } else {
-        const agent = new HttpsProxyAgent(this.config.proxyUrl);
-        config.httpsAgent = agent;
-        config.httpAgent = agent;
+    if (this.config.proxyUrl && this.config.proxyUrl.trim() !== "") {
+      try {
+        if (this.config.proxyUrl.startsWith("socks")) {
+          const agent = new SocksProxyAgent(this.config.proxyUrl);
+          config.httpsAgent = agent;
+          config.httpAgent = agent;
+        } else {
+          const agent = new HttpsProxyAgent(this.config.proxyUrl);
+          config.httpsAgent = agent;
+          config.httpAgent = agent;
+        }
+        this.logger.debug(`Using proxy: ${this.config.proxyUrl}`);
+      } catch (error: any) {
+        this.logger.warning(`Failed to create proxy agent: ${error.message}`);
       }
+    } else {
+      this.logger.debug("No proxy configured");
     }
 
     return config;
@@ -135,12 +144,29 @@ export class Crawler {
     const filename = `${String(index).padStart(4, "0")}_${base}.html`;
     const filepath = path.join(this.config.outputDir, filename);
 
-    fs.writeFileSync(filepath, content, "utf-8");
+    try {
+      fs.writeFileSync(filepath, content, "utf-8");
+      this.logger.debug(`Successfully saved HTML to ${filepath}`);
+    } catch (error: any) {
+      this.logger.error(`Failed to save HTML to ${filepath}: ${error.message}`);
+      throw error;
+    }
+
     return filepath;
   }
 
   async crawl(): Promise<void> {
     this.logger.info("Initializing crawler (Axios + Cheerio)...");
+    this.logger.info(
+      `Configuration: Output dir: ${this.config.outputDir}, Max pages: ${this.config.maxPages}`
+    );
+    this.logger.info(`Start URLs: ${this.config.startUrls.join(", ")}`);
+
+    if (this.config.proxyUrl) {
+      this.logger.info(`Proxy configured: ${this.config.proxyUrl}`);
+    } else {
+      this.logger.info("No proxy configured");
+    }
 
     // Initial seed
     for (const seed of this.config.startUrls) {
@@ -157,7 +183,9 @@ export class Crawler {
         ) {
           this.queue.push(seedNorm);
         }
-      } catch (e) {}
+      } catch (e: any) {
+        this.logger.warning(`Invalid seed URL: ${seed} - ${e.message}`);
+      }
     }
 
     if (this.queue.length === 0) {
