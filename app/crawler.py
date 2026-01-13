@@ -1,246 +1,321 @@
-from curl_cffi import requests
-from bs4 import BeautifulSoup
-import time
+
 import os
+import re
 import sys
-from urllib.parse import urljoin, urlparse
+import time
+import hashlib
 import logging
+import random
+from collections import deque
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
-# Configuration du logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+import requests
+from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+
+def setup_logger(level: str) -> logging.Logger:
+    logger = logging.getLogger("carzone_crawler")
+    logger.setLevel(level.upper() if level else "INFO")
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.handlers = [handler]
+    logger.propagate = False
+    return logger
+
+
+LOGGER = setup_logger(os.getenv("LOG_LEVEL", "INFO"))
+
+
+# Config via env vars
+OUTPUT_DIR = os.getenv("OUTPUT_DIR", "/data")
+PROXY_URL = os.getenv("PROXY_URL", "").strip()
+START_URLS = [u.strip() for u in os.getenv("START_URLS", "https://www.carzone.ie/cars").split(",") if u.strip()]
+MAX_PAGES = int(os.getenv("MAX_PAGES", "200"))
+CRAWL_DELAY_MIN = float(os.getenv("CRAWL_DELAY_MIN", "0.5"))
+CRAWL_DELAY_MAX = float(os.getenv("CRAWL_DELAY_MAX", "2.0"))
+REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "20"))
+
+# Domain rules
+ALLOWED_DOMAIN = "carzone.ie"
+ALLOWED_PATH_PREFIXES = [
+    "/cars",
+    "/used-cars",
+    "/electric-cars",
+    "/dealer-cars",
+]
+EXCLUDED_PATH_SUBSTRINGS = [
+    "/news", "/advice", "/review", "/reviews", "/blog", "/help",
+    "/login", "/account", "/privacy", "/terms", "/about", "/sell",
+    "/new-cars", "/finance", "/car-reviews", "/insurance", "/contact",
+    "/sitemap", "/cookies", "/cookie"
+]
+EXCLUDED_EXTENSIONS = (
+    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico", ".webp", ".bmp",
+    ".css", ".js", ".json", ".pdf", ".txt", ".xml", ".woff", ".woff2", ".ttf", ".map"
 )
-logger = logging.getLogger(__name__)
 
-class CarZoneCrawler:
-    def __init__(self, base_url, output_dir, proxy_url=None, max_pages=200):
-        self.base_url = base_url
-        self.output_dir = output_dir
-        self.max_pages = max_pages
-        self.visited_urls = set()
-        self.pages_saved = 0
-        
-        # Initialisation de la session curl_cffi
-        # curl_cffi simule l'empreinte TLS d'un vrai navigateur (Chrome)
-        self.session = requests.Session()
-        
-        # Configuration du proxy
-        self.proxies = None
-        if proxy_url:
-            self.proxies = {
-                'http': proxy_url,
-                'https': proxy_url
-            }
-            logger.info(f"Proxy configuré: {proxy_url}")
-        
-        # Création du dossier de sortie
-        os.makedirs(output_dir, exist_ok=True)
-    
-    def get_page(self, url):
-        """Récupère le contenu d'une page"""
+# Reasonable desktop UAs to reduce blocking risk
+USER_AGENTS = [
+    # Chrome (Win/Mac/Linux)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
+    " Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6_1) AppleWebKit/537.36 (KHTML, like Gecko)"
+    " Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)"
+    " Chrome/120.0.0.0 Safari/537.36",
+    # Firefox
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13.6; rv:120.0) Gecko/20100101 Firefox/120.0",
+]
+
+
+def slugify_for_filename(url: str) -> str:
+    """
+    Create a reasonably safe filename from a URL.
+    """
+    parsed = urlsplit(url)
+    path = parsed.path.strip("/")
+    path_slug = re.sub(r"[^a-zA-Z0-9\-_/]+", "-", path)
+    path_slug = path_slug.replace("/", "-")
+    if not path_slug:
+        path_slug = "root"
+
+    query = parsed.query
+    query_hash = hashlib.sha1(query.encode("utf-8")).hexdigest()[:8] if query else "noq"
+    host = parsed.netloc.replace(":", "_")
+    return f"{host}_{path_slug}_{query_hash}"
+
+
+def normalize_url(url: str) -> str:
+    """
+    Normalize URL to https scheme, strip fragments, remove default ports.
+    """
+    parsed = urlsplit(url)
+    scheme = "https"  # force https
+    netloc = parsed.netloc
+    if netloc.endswith(":80") or netloc.endswith(":443"):
+        netloc = netloc.split(":")[0]
+    # drop fragment
+    return urlunsplit((scheme, netloc, parsed.path, parsed.query, ""))
+
+
+def is_same_domain(url: str, allowed_domain: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+        host = parsed.netloc.lower()
+        return host == allowed_domain or host.endswith("." + allowed_domain)
+    except Exception:
+        return False
+
+
+def is_html_response(resp: requests.Response) -> bool:
+    ctype = resp.headers.get("Content-Type", "")
+    return "text/html" in ctype or "application/xhtml+xml" in ctype
+
+
+def is_excluded_path(path: str) -> bool:
+    lower = path.lower()
+    if any(lower.endswith(ext) for ext in EXCLUDED_EXTENSIONS):
+        return True
+    if any(substr in lower for substr in EXCLUDED_PATH_SUBSTRINGS):
+        return True
+    return False
+
+
+def is_listing_candidate(url: str) -> bool:
+    """
+    Heuristic to keep only 'listing-like' pages under /cars, /used-cars, etc.
+    """
+    try:
+        parsed = urlsplit(url)
+    except Exception:
+        return False
+
+    if not is_same_domain(url, ALLOWED_DOMAIN):
+        return False
+
+    path = parsed.path or "/"
+    if is_excluded_path(path):
+        return False
+
+    if any(path == p or path.startswith(p + "/") for p in ALLOWED_PATH_PREFIXES):
+        return True
+
+    # Allow pagination-like query on /cars?...
+    if path == "/cars":
+        return True
+
+    return False
+
+
+def extract_links(html: str, base_url: str) -> list:
+    """
+    Extract absolute links from HTML and normalize them.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    links = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.startswith("#") or href.startswith("mailto:") or href.startswith("tel:"):
+            continue
+        abs_url = urljoin(base_url, href)
         try:
-            # Utilisation de curl_cffi avec l'impersonation Chrome
-            response = self.session.get(
-                url, 
-                impersonate="chrome",
-                proxies=self.proxies,
-                timeout=30
-            )
-            
-            # Vérification du statut
-            # Note: curl_cffi ne lève pas toujours d'exception sur 403 comme requests.raise_for_status() par défaut,
-            # mais on peut vérifier le status_code
-            if response.status_code != 200:
-                logger.error(f"Erreur HTTP {response.status_code} pour {url}")
-                # Petit délai après une erreur pour être respectueux du serveur
-                time.sleep(3)
-                return None
-                
-            return response.text
-        except Exception as e:
-            logger.error(f"Erreur lors de la récupération de {url}: {e}")
+            abs_url = normalize_url(abs_url)
+        except Exception:
+            continue
+        links.append(abs_url)
+    return links
+
+
+def create_session(proxy_url: str | None) -> requests.Session:
+    sess = requests.Session()
+    # Rotating UA by request (we set base headers; we'll override per request)
+    sess.headers.update({
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    })
+
+    retry = Retry(
+        total=5,
+        backoff_factor=1.0,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "HEAD", "OPTIONS"],
+        raise_on_status=False,
+        respect_retry_after_header=True,
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=16, pool_maxsize=32)
+    sess.mount("http://", adapter)
+    sess.mount("https://", adapter)
+
+    if proxy_url:
+        # Support http(s) and socks (socks5h)
+        sess.proxies.update({"http": proxy_url, "https": proxy_url})
+
+    return sess
+
+
+def polite_sleep():
+    delay = random.uniform(CRAWL_DELAY_MIN, CRAWL_DELAY_MAX)
+    time.sleep(delay)
+
+
+def save_html(content: bytes, out_dir: str, index: int, url: str) -> str:
+    os.makedirs(out_dir, exist_ok=True)
+    base = slugify_for_filename(url)
+    filename = f"{index:04d}_{base}.html"
+    path = os.path.join(out_dir, filename)
+    with open(path, "wb") as f:
+        f.write(content)
+    return path
+
+
+def fetch(session: requests.Session, url: str) -> requests.Response | None:
+    headers = {"User-Agent": random.choice(USER_AGENTS)}
+    try:
+        resp = session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        # Handle too many requests explicitly
+        if resp.status_code == 429:
+            retry_after = resp.headers.get("Retry-After")
+            sleep_s = 5
+            if retry_after:
+                try:
+                    sleep_s = int(retry_after)
+                except Exception:
+                    pass
+            LOGGER.warning("429 received. Sleeping for %ss...", sleep_s)
+            time.sleep(sleep_s)
             return None
-    
-    def save_page(self, url, html_content):
-        """Sauvegarde le contenu HTML d'une page"""
-        # Génère un nom de fichier unique basé sur l'URL
-        filename = f"page_{self.pages_saved + 1:04d}.html"
-        filepath = os.path.join(self.output_dir, filename)
-        
+        return resp
+    except requests.RequestException as e:
+        LOGGER.warning("Request error for %s: %s", url, e)
+        return None
+
+
+def crawl():
+    if PROXY_URL:
+        LOGGER.info("Proxy enabled: %s", PROXY_URL)
+    else:
+        LOGGER.info("No proxy configured. Set PROXY_URL to enable one.")
+
+    session = create_session(PROXY_URL)
+
+    queue = deque()
+    visited = set()
+    saved_urls = set()
+    saved_count = 0
+
+    # Seed queue
+    for seed in START_URLS:
         try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-            
-            # Sauvegarde aussi l'URL correspondante
-            meta_file = os.path.join(self.output_dir, f"page_{self.pages_saved + 1:04d}_url.txt")
-            with open(meta_file, 'w', encoding='utf-8') as f:
-                f.write(url)
-            
-            self.pages_saved += 1
-            logger.info(f"Page {self.pages_saved}/{self.max_pages} sauvegardée: {filename}")
-            return True
-        except Exception as e:
-            logger.error(f"Erreur lors de la sauvegarde de {url}: {e}")
-            return False
-    
-    def is_valid_carzone_url(self, url):
-        """Valide qu'une URL appartient bien au domaine carzone.ie"""
-        try:
-            parsed = urlparse(url)
-            # Vérifie que c'est bien carzone.ie et que c'est HTTPS
-            return (parsed.netloc == 'www.carzone.ie' or parsed.netloc == 'carzone.ie') and \
-                   parsed.scheme in ['http', 'https']
-        except Exception as e:
-            logger.warning(f"URL invalide: {url} - {e}")
-            return False
-    
-    def extract_car_listing_urls(self, html_content, base_url):
-        """Extrait les URLs des annonces de voitures"""
-        soup = BeautifulSoup(html_content, 'lxml')
-        urls = set()
-        
-        # Recherche des liens vers les annonces individuelles
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            full_url = urljoin(base_url, href)
-            
-            # Validation de l'URL avec urlparse
-            if not self.is_valid_carzone_url(full_url):
-                continue
-            
-            # Filtre pour ne garder que les URLs d'annonces de voitures
-            if '/car/' in full_url or '/advert/' in full_url:
-                urls.add(full_url)
-        
-        return list(urls)
-    
-    def get_listing_pages(self):
-        """Récupère les URLs des pages de liste"""
-        listing_urls = []
-        
-        # Page principale de recherche
-        search_url = "https://www.carzone.ie/used-cars"
-        
-        # Parcourt plusieurs pages de résultats
-        for page_num in range(1, 40):  # Augmenté la plage pour être sûr d'avoir assez d'annonces
-            if page_num == 1:
-                url = search_url
-            else:
-                url = f"{search_url}?page={page_num}"
-            
-            listing_urls.append(url)
-            
-            if len(listing_urls) >= 35:  # Limite de sécurité
-                break
-        
-        return listing_urls
-    
-    def crawl(self):
-        """Lance le crawling"""
-        logger.info(f"Début du crawling de {self.base_url}")
-        logger.info(f"Objectif: {self.max_pages} pages")
-        
-        # Récupère les pages de liste
-        listing_pages = self.get_listing_pages()
-        logger.info(f"Pages de liste à parcourir: {len(listing_pages)}")
-        
-        car_urls = []
-        
-        # Parcourt les pages de liste pour extraire les URLs des annonces
-        for list_url in listing_pages:
-            if self.pages_saved >= self.max_pages:
-                break
-            
-            logger.info(f"Parcours de la page liste: {list_url}")
-            html = self.get_page(list_url)
-            
-            if html:
-                urls = self.extract_car_listing_urls(html, list_url)
-                car_urls.extend(urls)
-                logger.info(f"URLs d'annonces trouvées: {len(urls)}")
-            else:
-                logger.warning(f"Impossible de lire la page liste {list_url}, passage à la suivante...")
-            
-            # Délai aléatoire pour simuler un humain
-            time.sleep(2) 
-        
-        # Déduplique les URLs
-        car_urls = list(set(car_urls))
-        logger.info(f"Total d'annonces uniques trouvées: {len(car_urls)}")
-        
-        # Vérification qu'on a bien trouvé des annonces
-        if not car_urls:
-            logger.error("Aucune annonce trouvée! Vérifiez la structure du site ou la connectivité.")
-            return
-        
-        # Crawl les pages d'annonces individuelles
-        for url in car_urls:
-            if self.pages_saved >= self.max_pages:
-                break
-            
-            if url in self.visited_urls:
-                continue
-            
-            html = self.get_page(url)
-            if html:
-                self.save_page(url, html)
-                self.visited_urls.add(url)
-            else:
-                logger.warning(f"Échec répété pour {url}")
-            
-            # Délai entre les requêtes pour être respectueux
-            time.sleep(1.5)
-        
-        logger.info(f"Crawling terminé. {self.pages_saved} pages sauvegardées.")
-        
-        # Crée un fichier de résumé
-        summary_file = os.path.join(self.output_dir, "crawl_summary.txt")
-        with open(summary_file, 'w', encoding='utf-8') as f:
-            f.write(f"Crawl Summary\n")
-            f.write(f"=============\n")
-            f.write(f"Base URL: {self.base_url}\n")
-            f.write(f"Pages saved: {self.pages_saved}\n")
-            f.write(f"Target: {self.max_pages}\n")
-            f.write(f"Proxy used: {self.proxies is not None}\n")
+            seed_norm = normalize_url(seed)
+        except Exception:
+            continue
+        if is_listing_candidate(seed_norm):
+            queue.append(seed_norm)
+
+    if not queue:
+        LOGGER.error("No valid START_URLS after filtering. Please set START_URLS to listing pages (e.g. https://www.carzone.ie/cars).")
+        sys.exit(2)
+
+    LOGGER.info("Starting crawl. Targets: %d pages. Seeds: %d", MAX_PAGES, len(queue))
+
+    while queue and saved_count < MAX_PAGES:
+        url = queue.popleft()
+        if url in visited:
+            continue
+        visited.add(url)
+
+        if not is_listing_candidate(url):
+            continue
+
+        polite_sleep()
+        resp = fetch(session, url)
+        if resp is None:
+            continue
+
+        if resp.status_code != 200:
+            LOGGER.debug("Skip %s (status %s)", url, resp.status_code)
+            continue
+
+        if not is_html_response(resp):
+            LOGGER.debug("Non-HTML content at %s", url)
+            continue
+
+        # Save page
+        if url not in saved_urls:
+            path = save_html(resp.content, OUTPUT_DIR, saved_count + 1, url)
+            saved_count += 1
+            saved_urls.add(url)
+            LOGGER.info("Saved %d/%d: %s -> %s", saved_count, MAX_PAGES, url, path)
+
+        # Extract next candidates
+        links = extract_links(resp.text, url)
+        for link in links:
+            if link not in visited and is_listing_candidate(link):
+                queue.append(link)
+
+    LOGGER.info("Crawl completed. Saved %d pages to %s", saved_count, OUTPUT_DIR)
+    if saved_count < MAX_PAGES:
+        LOGGER.warning("Could not reach the target of %d pages. Collected %d.", MAX_PAGES, saved_count)
+
 
 def main():
-    # REQUIREMENT: Le Dockerfile doit permettre de définir dynamiquement une URL de proxy
-    # (via une variable d’environnement)
-    proxy_url = os.environ.get('PROXY_URL')
-
-    # output_dir = os.environ.get('OUTPUT_DIR', '/output')
-    
-    # REQUIREMENT: Stocker les fichiers HTML dans un dossier local monté depuis l’hôte
-    # (Default matches Dockerfile VOLUME)
-    output_dir = os.environ.get('OUTPUT_DIR', '/app/output')
-    
-    # REQUIREMENT: Crawler 200 pages (Configurable via env)
-    max_pages = int(os.environ.get('MAX_PAGES', '200'))
-    
-    base_url = os.environ.get('BASE_URL', 'https://www.carzone.ie')
-    
-    logger.info("=== CarZone.ie Crawler ===")
-    logger.info(f"Output directory: {output_dir}")
-    logger.info(f"Max pages: {max_pages}")
-    logger.info(f"Proxy: {proxy_url if proxy_url else 'None'}")
-    
-    # Initialise et lance le crawler
-    crawler = CarZoneCrawler(
-        base_url=base_url,
-        output_dir=output_dir,
-        proxy_url=proxy_url,
-        max_pages=max_pages
-    )
-    
     try:
         # REQUIREMENT: Une fois ... lancé, l’exécution doit automatiquement Crawler les 200 pages
-        crawler.crawl()
-        logger.info("Crawler terminé avec succès!")
-        sys.exit(0)
+        crawl()
+        LOGGER.info("Crawler terminé avec succès!")
+    except KeyboardInterrupt:
+        LOGGER.warning("Interrupted by user.")
     except Exception as e:
-        logger.error(f"Erreur fatale: {e}")
+        LOGGER.error(f"Erreur fatale: {e}")
+        # LOGGER.exception("Fatal error: %s", e)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

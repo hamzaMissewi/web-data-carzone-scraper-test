@@ -1,0 +1,38 @@
+
+node_modules/
+
+# Output files
+output/
+*.html
+*.txt
+
+.Python
+env/
+venv/
+ENV/
+build/
+# dist/
+
+# Docker
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# **/*.txt
+**/*copy*
+**/*ignore*
+# !TODO.txt
+!.gitignore
+!requirements.txt

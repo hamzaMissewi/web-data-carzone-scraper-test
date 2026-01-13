@@ -31,4 +31,4 @@ ENV OUTPUT_DIR=/data \
 RUN mkdir -p /data
 
 # Run the crawler automatically
-CMD ["python", "-m", "app.main"]
+CMD ["python", "-m", "app.crawler"]
