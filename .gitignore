@@ -2,7 +2,7 @@
 node_modules/
 
 # Output files
-output/
+# output/
 *.html
 *.txt
 
@@ -11,7 +11,7 @@ env/
 venv/
 ENV/
 build/
-# dist/
+dist/
 
 # Docker
 .dockerignore

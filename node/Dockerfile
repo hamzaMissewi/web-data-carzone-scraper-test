@@ -1,6 +1,9 @@
 # REQUIREMENT: Être entièrement exécutable via un Dockerfile
 FROM node:20-slim
 
+# Axios/Cheerio implementation - no Chromium needed
+# RUN apt-get update && apt-get install -y ... (Removed)
+
 # REQUIREMENT: Le Dockerfile doit permettre de définir dynamiquement une URL de proxy
 ARG PROXY_URL=""
 ENV PROXY_URL=${PROXY_URL}
@@ -12,6 +15,9 @@ ENV OUTPUT_DIR="/app/output"
 ENV MAX_PAGES=200
 
 ENV BASE_URL="https://www.carzone.ie"
+# No Puppeteer
+# ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+# ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
 
 WORKDIR /app
 
@@ -34,6 +40,9 @@ RUN mkdir -p /app/output && chmod 777 /app/output
 # The volume where HTML files will be stored
 VOLUME ["/app/output"]
 
+# Standard node running (optional: create a user if strict security needed, but removing pptruser specific for chrome)
+USER hamza-node
+
 # REQUIREMENT: Une fois l'image construite et le conteneur lancé, l'exécution doit automatiquement
 # Utiliser le proxy spécifié ; Crawler les 200 pages ; Stocker les fichiers HTML
-CMD ["node", "dist/crawler.js"]
+CMD ["node", "dist/index.js"]

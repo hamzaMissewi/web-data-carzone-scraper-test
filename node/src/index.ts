@@ -5,7 +5,9 @@ const LOGGER = setupLogger(process.env.LOG_LEVEL || "INFO");
 
 // Config via env vars
 const OUTPUT_DIR = process.env.OUTPUT_DIR || "/data";
-const PROXY_URL = process.env.PROXY_URL?.trim() || undefined;
+// const PROXY_URL = process.env.PROXY_URL?.trim() || undefined;
+const PROXY_URL =
+  process.env.PROXY_URL?.trim() || "http://user:pass@proxy-host:port";
 const START_URLS = (process.env.START_URLS || "https://www.carzone.ie/cars")
   .split(",")
   .map((u) => u.trim())
@@ -123,5 +125,4 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-// Run the crawler
 main();

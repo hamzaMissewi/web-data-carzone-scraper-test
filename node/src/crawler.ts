@@ -1,17 +1,16 @@
-import axios, { AxiosInstance, AxiosResponse } from "axios";
-import axiosRetry from "axios-retry";
+import axios from "axios";
 import * as cheerio from "cheerio";
 import * as fs from "fs";
 import * as path from "path";
 import { URL } from "url";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { SocksProxyAgent } from "socks-proxy-agent";
+
 import { Logger } from "./logger";
 import {
   slugifyForFilename,
   normalizeUrl,
   isListingCandidate,
-  isHtmlResponse,
   politeSleep,
 } from "./utils";
 
@@ -33,7 +32,6 @@ interface CrawlerConfig {
 export class Crawler {
   private config: CrawlerConfig;
   private logger: Logger;
-  private session: AxiosInstance;
   private queue: string[] = [];
   private visited: Set<string> = new Set();
   private savedUrls: Set<string> = new Set();
@@ -42,87 +40,58 @@ export class Crawler {
   constructor(config: CrawlerConfig, logger: Logger) {
     this.config = config;
     this.logger = logger;
-    this.session = this.createSession();
   }
 
-  private createSession(): AxiosInstance {
-    const axiosConfig: any = {
-      timeout: this.config.requestTimeout * 1000,
+  private getAxiosConfig(url: string) {
+    const config: any = {
       headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
         Connection: "keep-alive",
-        "Cache-Control": "no-cache",
-        Pragma: "no-cache",
+        "Upgrade-Insecure-Requests": "1",
+        "Cache-Control": "max-age=0",
       },
-      maxRedirects: 5,
-      validateStatus: () => true, // Don't throw on any status
+      validateStatus: () => true,
+      timeout: this.config.requestTimeout * 1000,
+      responseType: "text", // Force text to avoid issues with axios trying to parse JSON
     };
 
-    // Configure proxy if provided
     if (this.config.proxyUrl) {
       if (this.config.proxyUrl.startsWith("socks")) {
-        axiosConfig.httpAgent = new SocksProxyAgent(this.config.proxyUrl);
-        axiosConfig.httpsAgent = new SocksProxyAgent(this.config.proxyUrl);
+        const agent = new SocksProxyAgent(this.config.proxyUrl);
+        config.httpsAgent = agent;
+        config.httpAgent = agent;
       } else {
-        axiosConfig.httpAgent = new HttpsProxyAgent(this.config.proxyUrl);
-        axiosConfig.httpsAgent = new HttpsProxyAgent(this.config.proxyUrl);
+        const agent = new HttpsProxyAgent(this.config.proxyUrl);
+        config.httpsAgent = agent;
+        config.httpAgent = agent;
       }
     }
 
-    const instance = axios.create(axiosConfig);
-
-    // Configure retry logic
-    axiosRetry(instance, {
-      retries: 5,
-      retryDelay: axiosRetry.exponentialDelay,
-      retryCondition: (error) => {
-        return (
-          axiosRetry.isNetworkOrIdempotentRequestError(error) ||
-          (error.response?.status
-            ? [429, 500, 502, 503, 504].includes(error.response.status)
-            : false)
-        );
-      },
-      onRetry: (retryCount, error, requestConfig) => {
-        this.logger.debug(
-          `Retry attempt ${retryCount} for ${requestConfig.url}`
-        );
-      },
-    });
-
-    return instance;
+    return config;
   }
 
-  private randomUserAgent(): string {
-    return this.config.userAgents[
-      Math.floor(Math.random() * this.config.userAgents.length)
-    ];
-  }
-
-  private async fetch(url: string): Promise<AxiosResponse | null> {
+  private async fetch(
+    url: string
+  ): Promise<{ content: string; status: number } | null> {
     try {
-      const response = await this.session.get(url, {
-        headers: {
-          "User-Agent": this.randomUserAgent(),
-        },
-      });
+      this.logger.debug(`Fetching ${url}...`);
+      const config = this.getAxiosConfig(url);
+      const response = await axios.get(url, config);
 
-      // Handle rate limiting
-      if (response.status === 429) {
-        const retryAfter = response.headers["retry-after"];
-        const sleepSeconds = retryAfter ? parseInt(retryAfter) : 5;
-        this.logger.warning(`429 received. Sleeping for ${sleepSeconds}s...`);
-        await new Promise((resolve) =>
-          setTimeout(resolve, sleepSeconds * 1000)
-        );
-        return null;
-      }
-
-      return response;
+      return {
+        content:
+          typeof response.data === "string"
+            ? response.data
+            : JSON.stringify(response.data),
+        status: response.status,
+      };
     } catch (error: any) {
-      this.logger.warning(`Request error for ${url}: ${error.message}`);
+      this.logger.warning(`Fetch error for ${url}: ${error.message}`);
       return null;
     }
   }
@@ -135,22 +104,22 @@ export class Crawler {
       const href = $(element).attr("href")?.trim();
       if (!href) return;
 
-      // Skip special links
       if (
         href.startsWith("#") ||
         href.startsWith("mailto:") ||
-        href.startsWith("tel:")
+        href.startsWith("tel:") ||
+        href.startsWith("javascript:")
       ) {
         return;
       }
 
       try {
-        // Create absolute URL
         const absUrl = new URL(href, baseUrl).toString();
         const normalized = normalizeUrl(absUrl);
         links.push(normalized);
       } catch (error) {
-        // Invalid URL, skip
+        // Invalid URL
+        console.log("Invalid URL");
       }
     });
 
@@ -158,7 +127,6 @@ export class Crawler {
   }
 
   private saveHtml(content: string, index: number, url: string): string {
-    // Create output directory if it doesn't exist
     if (!fs.existsSync(this.config.outputDir)) {
       fs.mkdirSync(this.config.outputDir, { recursive: true });
     }
@@ -172,13 +140,9 @@ export class Crawler {
   }
 
   async crawl(): Promise<void> {
-    if (this.config.proxyUrl) {
-      this.logger.info(`Proxy enabled: ${this.config.proxyUrl}`);
-    } else {
-      this.logger.info("No proxy configured. Set PROXY_URL to enable one.");
-    }
+    this.logger.info("Initializing crawler (Axios + Cheerio)...");
 
-    // Seed queue
+    // Initial seed
     for (const seed of this.config.startUrls) {
       try {
         const seedNorm = normalizeUrl(seed);
@@ -193,30 +157,23 @@ export class Crawler {
         ) {
           this.queue.push(seedNorm);
         }
-      } catch (error) {
-        // Invalid URL, skip
-      }
+      } catch (e) {}
     }
 
     if (this.queue.length === 0) {
-      this.logger.error(
-        "No valid START_URLS after filtering. Please set START_URLS to listing pages (e.g. https://www.carzone.ie/cars)."
-      );
+      this.logger.error("No valid START_URLS.");
       process.exit(2);
     }
 
-    this.logger.info(
-      `Starting crawl. Targets: ${this.config.maxPages} pages. Seeds: ${this.queue.length}`
-    );
+    this.logger.info(`Starting crawl. Max pages: ${this.config.maxPages}`);
 
     while (this.queue.length > 0 && this.savedCount < this.config.maxPages) {
       const url = this.queue.shift()!;
 
-      if (this.visited.has(url)) {
-        continue;
-      }
+      if (this.visited.has(url)) continue;
       this.visited.add(url);
 
+      // Check candidacy
       if (
         !isListingCandidate(
           url,
@@ -231,25 +188,15 @@ export class Crawler {
 
       await politeSleep(this.config.crawlDelayMin, this.config.crawlDelayMax);
 
-      const resp = await this.fetch(url);
-      if (!resp) {
-        continue;
-      }
+      const result = await this.fetch(url);
+      if (!result) continue;
 
-      if (resp.status !== 200) {
-        this.logger.debug(`Skip ${url} (status ${resp.status})`);
-        continue;
-      }
+      const { content, status } = result;
 
-      const contentType = resp.headers["content-type"] || "";
-      if (!isHtmlResponse(contentType)) {
-        this.logger.debug(`Non-HTML content at ${url}`);
-        continue;
-      }
+      this.logger.debug(`Fetched ${url} (Status: ${status})`);
 
-      // Save page
       if (!this.savedUrls.has(url)) {
-        const filepath = this.saveHtml(resp.data, this.savedCount + 1, url);
+        const filepath = this.saveHtml(content, this.savedCount + 1, url);
         this.savedCount++;
         this.savedUrls.add(url);
         this.logger.info(
@@ -257,11 +204,11 @@ export class Crawler {
         );
       }
 
-      // Extract next candidates
-      const links = this.extractLinks(resp.data, url);
+      const links = this.extractLinks(content, url);
       for (const link of links) {
         if (
           !this.visited.has(link) &&
+          !this.queue.includes(link) &&
           isListingCandidate(
             link,
             this.config.allowedDomain,
@@ -275,13 +222,6 @@ export class Crawler {
       }
     }
 
-    this.logger.info(
-      `Crawl completed. Saved ${this.savedCount} pages to ${this.config.outputDir}`
-    );
-    if (this.savedCount < this.config.maxPages) {
-      this.logger.warning(
-        `Could not reach the target of ${this.config.maxPages} pages. Collected ${this.savedCount}.`
-      );
-    }
+    this.logger.info(`Crawl completed. Saved ${this.savedCount} pages.`);
   }
 }
