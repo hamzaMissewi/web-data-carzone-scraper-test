@@ -2,8 +2,11 @@
 node_modules/
 
 # Output files
-# output/
-*.html
+
+*output/*.html
+!page_1.html
+
+!html/
 
 .Python
 env/
