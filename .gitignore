@@ -1,0 +1,46 @@
+
+node_modules/
+
+# Output files
+
+output/
+# *output/*.html
+# !page_1.html
+
+!html/
+
+.Python
+env/
+venv/
+ENV/
+build/
+dist
+
+package-lock.json
+website.png
+
+python
+
+# Docker
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+**/*ignore*
+!.gitignore
+!requirements.txt
+
+# **/*.md
+!README.md
